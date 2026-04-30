@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { v4 as uuidv4 } from 'uuid';
+import { db } from '../firebase';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 const FinanceContext = createContext();
 
 export const useFinance = () => useContext(FinanceContext);
 
 export const FinanceProvider = ({ children }) => {
-  // Try to load from localStorage first
   const loadData = (key, defaultValue) => {
     const saved = localStorage.getItem(key);
     if (saved) {
@@ -29,15 +29,14 @@ export const FinanceProvider = ({ children }) => {
     { id: 'c7', name: 'Giải trí', type: 'expense', color: '#ec4899' },
   ];
 
-  const [transactions, setTransactions] = useState(() => loadData('finance_transactions', []));
   const [categories, setCategories] = useState(() => loadData('finance_categories', defaultCategories));
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  
+  // Transactions now from Firebase
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Save to localStorage whenever data changes
-  useEffect(() => {
-    localStorage.setItem('finance_transactions', JSON.stringify(transactions));
-  }, [transactions]);
-
+  // Sync Categories & Theme with LocalStorage
   useEffect(() => {
     localStorage.setItem('finance_categories', JSON.stringify(categories));
   }, [categories]);
@@ -47,26 +46,69 @@ export const FinanceProvider = ({ children }) => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  // Fetch Transactions from Firebase Realtime
+  useEffect(() => {
+    const q = query(collection(db, 'transactions'), orderBy('date', 'desc'));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const transData = [];
+      snapshot.forEach((docSnapshot) => {
+        transData.push({ id: docSnapshot.id, ...docSnapshot.data() });
+      });
+      setTransactions(transData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Lỗi khi tải dữ liệu từ Firebase: ", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const toggleTheme = () => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const addTransaction = (transaction) => {
-    setTransactions(prev => [{ ...transaction, id: uuidv4(), date: new Date(transaction.date).toISOString() }, ...prev]);
+  // Firebase Add
+  const addTransaction = async (transaction) => {
+    try {
+      await addDoc(collection(db, 'transactions'), {
+        ...transaction,
+        date: new Date(transaction.date).toISOString()
+      });
+    } catch (e) {
+      console.error("Lỗi khi thêm giao dịch: ", e);
+      alert("Không thể thêm giao dịch. Vui lòng kiểm tra quyền truy cập (Rules) trên Firebase Firestore.");
+    }
   };
 
-  const deleteTransaction = (id) => {
-    setTransactions(prev => prev.filter(t => t.id !== id));
+  // Firebase Delete
+  const deleteTransaction = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+    } catch (e) {
+      console.error("Lỗi khi xóa giao dịch: ", e);
+    }
   };
 
-  const updateTransaction = (id, updatedData) => {
-    setTransactions(prev => prev.map(t => (t.id === id ? { ...t, ...updatedData } : t)));
+  // Firebase Update
+  const updateTransaction = async (id, updatedData) => {
+    try {
+      const docRef = doc(db, 'transactions', id);
+      await updateDoc(docRef, {
+        ...updatedData,
+        date: new Date(updatedData.date).toISOString()
+      });
+    } catch (e) {
+      console.error("Lỗi khi cập nhật giao dịch: ", e);
+    }
   };
 
   const value = {
     transactions,
     categories,
     theme,
+    loading,
     toggleTheme,
     addTransaction,
     deleteTransaction,
